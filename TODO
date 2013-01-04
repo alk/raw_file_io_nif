@@ -15,3 +15,5 @@
 o [DONE] using strerror to stringify errno values seems like stupid
    idea. Need EPERM to become eperm, just like with erlang's file
    driver
+
+* use large file io on linux/i386
