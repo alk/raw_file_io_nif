@@ -15,6 +15,6 @@ int raw_file_close(file_fd_handle fd);
 int raw_file_write(file_fd_handle fd, void *buf, size_t *nbyte);
 int raw_file_pread(file_fd_handle fd, void *buf, size_t *nbyte, int64_t offset);
 
-char *raw_file_error_message(int error, char *buf, int bufsize);
+char *raw_file_error_message(int error);
 
 #endif

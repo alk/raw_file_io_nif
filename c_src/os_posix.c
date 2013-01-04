@@ -7,6 +7,9 @@
 #include <errno.h>
 #include <assert.h>
 
+#include <erl_nif.h>
+#include <erl_driver.h>
+
 #include "os.h"
 
 /* TODO: truncate and perhaps O_CREAT too */
@@ -72,10 +75,7 @@ int raw_file_pread(file_fd_handle fd, void *buf, size_t *nbyte, int64_t offset)
 	return 0;
 }
 
-char *raw_file_error_message(int error, char *buf, int bufsize)
+char *raw_file_error_message(int error)
 {
-	assert(bufsize > 0);
-	buf[0] = 0;
-	strerror_r(error, buf, bufsize);
-	return buf;
+	return erl_errno_id(error);
 }

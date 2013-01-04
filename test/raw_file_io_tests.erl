@@ -98,3 +98,6 @@ access_on_closed_ref_test() ->
     ok = raw_file_io:close(Ref2),
 
     ok.
+
+errno_test() ->
+    ?assertEqual({error, enoent}, raw_file_io:open(<<"/this/cannot/ever/exist">>, 3)).

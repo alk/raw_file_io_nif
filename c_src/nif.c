@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <assert.h>
 
-#include "erl_nif.h"
+#include <erl_nif.h>
 #include "async_calls.h"
 #include "os.h"
 
@@ -78,8 +78,7 @@ ERL_NIF_TERM nif_open(ErlNifEnv* env,
 	file->fd = raw_file_open(namebuf, flags, &error);
 	if (error) {
 		free(file);
-		raw_file_error_message(error, namebuf, sizeof(namebuf));
-		return make_error(env, namebuf);
+		return make_error(env, raw_file_error_message(error));
 	}
 
 	file->lock = enif_mutex_create("file mutex");
@@ -198,12 +197,11 @@ void perform_read(void *_read_req)
 			       &readen,
 			       (int64_t)(read_req->off));
 	if (error) {
-		char error_buf[1024];
-		raw_file_error_message(error, error_buf, sizeof(error_buf));
+		const char *error_str = raw_file_error_message(error);
 		reply_value = enif_make_tuple(
 			read_req->env, 2,
 			enif_make_atom(read_req->env, "error"),
-			enif_make_atom(read_req->env, error_buf));
+			enif_make_atom(read_req->env, error_str));
 		enif_release_binary(&read_req->buf);
 	} else {
 		enif_realloc_binary(&read_req->buf, (size_t)readen);
@@ -313,9 +311,8 @@ void perform_append(void *_req)
 	rv = raw_file_write(file->fd, bin.data, &written);
 
 	if (rv) {
-		char error_buf[1024];
-		raw_file_error_message(rv, error_buf, sizeof(error_buf));
-		reply_value = enif_make_atom(req->env, error_buf);
+		const char *error_str = raw_file_error_message(rv);
+		reply_value = enif_make_atom(req->env, error_str);
 	}
 
 after_write:
