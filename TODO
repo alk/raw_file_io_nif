@@ -1,0 +1,17 @@
+* consider doing close async (i.e. NFS can have slow close AFAIK)
+
+* return possible error from close (i.e. NFS too)
+
+* implement win32 support
+
+* resolve TODO with open flags (i.e. at least O_CREAT and O_TRUNC)
+
+* cleanly export either open flag constants or maybe wrap open and
+   parse options into int flags
+
+* maybe clean up return values (i.e. {ok, Value} versus {error,
+   _} and just value)
+
+* using strerror to stringify errno values seems like stupid
+   idea. Need EPERM to become eperm, just like with erlang's file
+   driver

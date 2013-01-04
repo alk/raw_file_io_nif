@@ -1,0 +1,86 @@
+%% Copyright 2011,  Filipe David Manana  <fdmanana@apache.org>
+%% Web:  http://github.com/fdmanana/snappy-erlang-nif
+%%
+%% Licensed under the Apache License, Version 2.0 (the "License"); you may not
+%% use this file except in compliance with the License. You may obtain a copy of
+%% the License at
+%%
+%%  http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing, software
+%% distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+%% WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+%% License for the specific language governing permissions and limitations under
+%% the License.
+
+-module(raw_file_io).
+
+-export([do_nothing/1]).
+
+-export([open/2, close/1, dup/1, initiate_pread/4, initiate_append/3]).
+
+-export([pread/3, append/2]).
+
+-on_load(init/0).
+
+
+init() ->
+    SoName = case code:priv_dir(?MODULE) of
+    {error, bad_name} ->
+        case filelib:is_dir(filename:join(["..", "priv"])) of
+        true ->
+            filename:join(["..", "priv", "raw_file_io_nif"]);
+        false ->
+            filename:join(["priv", "raw_file_io_nif"])
+        end;
+    Dir ->
+        filename:join(Dir, "raw_file_io_nif")
+    end,
+    erlang:load_nif(SoName, 0).
+
+do_nothing(_) ->
+    not_nif.
+
+open(_, _) ->
+    erlang:nif_error(not_loaded).
+
+close(_) ->
+    erlang:nif_error(not_loaded).
+
+dup(_) ->
+    erlang:nif_error(not_loaded).
+
+initiate_pread(_Tag, _FileRef, _Off, _Len) ->
+    erlang:nif_error(not_loaded).
+
+initiate_append(_Tag, _FileRef, _Iolist) ->
+    erlang:nif_error(not_loaded).
+
+pread(FileRef, Off, Len) ->
+    Tag = erlang:make_ref(),
+    case initiate_pread(Tag, FileRef, Off, Len) of
+        Tag ->
+            receive
+                {Tag, Value} ->
+                    Value
+            end;
+        Err ->
+            Err
+    end.
+
+append(FileRef, IoList) ->
+    Tag = erlang:make_ref(),
+    case initiate_append(Tag, FileRef, IoList) of
+        Tag ->
+            receive
+                {Tag, Written, Error} ->
+                    case Error of
+                        Tag ->
+                            ok;
+                        _ ->
+                            {error, Error, Written}
+                    end
+            end;
+        Err ->
+            Err
+    end.

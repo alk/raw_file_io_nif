@@ -1,0 +1,12 @@
+{application, raw_file_io,
+ [
+  {description, "replacement of efile driver"},
+  {vsn, "1.0.0"},
+  {registered, []},
+  {applications, [
+                  kernel,
+                  stdlib
+                 ]},
+  {env, []},
+  {modules, [raw_file_io]}
+ ]}.
