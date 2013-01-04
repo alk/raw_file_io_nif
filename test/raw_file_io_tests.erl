@@ -80,7 +80,7 @@ write_and_read_test() ->
     ok.
 
 access_on_closed_ref_test() ->
-    Name = setup_file("accessing_on_closed_ref_file"),
+    Name = setup_file("access_on_closed_ref_file"),
 
     Ref1 = raw_file_io:open(Name, 3),
     ?assertNotMatch({error, _}, Ref1),
