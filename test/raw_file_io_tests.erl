@@ -30,7 +30,7 @@ setup_file(Basename) ->
 write_and_read_test() ->
     Name = setup_file("write_and_read_file"),
 
-    Ref1 = raw_file_io:open(Name, 3),
+    Ref1 = raw_file_io:open(Name, [read, append]),
     ?assertNotMatch({error, _}, Ref1),
     Ref2 = raw_file_io:dup(Ref1),
     ?assertNotMatch({error, _}, Ref2),
@@ -64,7 +64,7 @@ write_and_read_test() ->
     Read3 = raw_file_io:pread(Ref1, erlang:size(Read1) + 5, 1024),
     ?assertEqual(<<"and some further stuff\n">>, Read3),
 
-    Ref3 = raw_file_io:open(Name, 2),
+    Ref3 = raw_file_io:open(Name, [append]),
     ?assertNotMatch({error, _}, Ref3),
 
     ok = raw_file_io:append(Ref3, <<"more\n">>),
@@ -82,7 +82,7 @@ write_and_read_test() ->
 access_on_closed_ref_test() ->
     Name = setup_file("access_on_closed_ref_file"),
 
-    Ref1 = raw_file_io:open(Name, 3),
+    Ref1 = raw_file_io:open(Name, [read, append]),
     ?assertNotMatch({error, _}, Ref1),
 
     ?assertEqual(<<"Some initial stuff\n">>, raw_file_io:pread(Ref1, 0, 1024)),
@@ -100,4 +100,4 @@ access_on_closed_ref_test() ->
     ok.
 
 errno_test() ->
-    ?assertEqual({error, enoent}, raw_file_io:open(<<"/this/cannot/ever/exist">>, 3)).
+    ?assertEqual({error, enoent}, raw_file_io:open(<<"/this/cannot/ever/exist">>, [read, append])).

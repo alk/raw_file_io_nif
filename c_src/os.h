@@ -4,8 +4,19 @@
 #include <stdint.h>
 
 #define FILE_FLAG_READ 1
-#define FILE_FLAG_WRITE 2
-#define FILE_FLAG_TRUNCATE 4
+/* it's actually combination of O_WRITE and O_APPEND */
+#define FILE_FLAG_APPEND 2
+#define FILE_FLAG_TRUNCATE 16
+#define FILE_FLAG_CREAT 32
+#define FILE_FLAG_EXCL 64
+#define FILE_FLAG_DIRECT 256
+#define FILE_FLAG_DATASYNC 1024
+#define FILE_FLAG_SYNC 2048
+
+#define FILE_FLAG_ALL (FILE_FLAG_READ|FILE_FLAG_APPEND|			\
+		       FILE_FLAG_TRUNCATE|FILE_FLAG_CREAT|FILE_FLAG_CREAT| \
+		       FILE_FLAG_EXCL|FILE_FLAG_DIRECT|			\
+		       FILE_FLAG_DATASYNC|FILE_FLAG_SYNC)
 
 typedef intptr_t file_fd_handle;
 

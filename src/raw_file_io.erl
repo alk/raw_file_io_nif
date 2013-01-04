@@ -41,7 +41,41 @@ init() ->
 do_nothing(_) ->
     not_nif.
 
-open(_, _) ->
+open(BinPath, Options) ->
+    do_open(BinPath, parse_open_options(Options, 0)).
+
+-define(FILE_FLAG_READ, 1).
+-define(FILE_FLAG_APPEND, 2).
+-define(FILE_FLAG_TRUNCATE, 16).
+-define(FILE_FLAG_CREAT, 32).
+-define(FILE_FLAG_EXCL, 64).
+-define(FILE_FLAG_DIRECT, 256).
+-define(FILE_FLAG_DATASYNC, 1024).
+-define(FILE_FLAG_SYNC, 2048).
+
+parse_open_options([], Flags) ->
+    Flags;
+parse_open_options([read|Rest], Flags) ->
+    parse_open_options(Rest, Flags bor ?FILE_FLAG_READ);
+parse_open_options([append|Rest], Flags) ->
+    parse_open_options(Rest, Flags bor ?FILE_FLAG_APPEND);
+parse_open_options([truncate|Rest], Flags) ->
+    parse_open_options(Rest, Flags bor ?FILE_FLAG_TRUNCATE);
+parse_open_options([creat|Rest], Flags) ->
+    parse_open_options(Rest, Flags bor ?FILE_FLAG_CREAT);
+parse_open_options([excl|Rest], Flags) ->
+    parse_open_options(Rest, Flags bor ?FILE_FLAG_EXCL);
+parse_open_options([direct|Rest], Flags) ->
+    parse_open_options(Rest, Flags bor ?FILE_FLAG_DIRECT);
+parse_open_options([datasync|Rest], Flags) ->
+    parse_open_options(Rest, Flags bor ?FILE_FLAG_DATASYNC);
+parse_open_options([sync|Rest], Flags) ->
+    parse_open_options(Rest, Flags bor ?FILE_FLAG_SYNC);
+parse_open_options(_X, _Flags) ->
+    erlang:error(badarg).
+
+
+do_open(_, _) ->
     erlang:nif_error(not_loaded).
 
 close(_) ->

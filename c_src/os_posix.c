@@ -1,3 +1,6 @@
+#define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64
+
 #include <string.h>
 #include <stdlib.h>
 #include <sys/types.h>
@@ -12,24 +15,54 @@
 
 #include "os.h"
 
-/* TODO: truncate and perhaps O_CREAT too */
 static
 int translate_open_flags(int flags)
 {
-	if (flags & ~(FILE_FLAG_READ | FILE_FLAG_WRITE))
+	int rv;
+
+	if (flags & ~(FILE_FLAG_READ | FILE_FLAG_APPEND))
 		return -1;
 	if (flags == 0)
 		return -1;
-	if (flags == FILE_FLAG_READ)
-		return O_RDONLY;
-	if (flags == FILE_FLAG_WRITE)
-		return O_WRONLY | O_APPEND;
-	return O_RDWR | O_APPEND;
+	if (flags == FILE_FLAG_READ) {
+		rv = O_RDONLY;
+	} else if (flags == FILE_FLAG_APPEND) {
+		rv = O_WRONLY | O_APPEND;
+	} else {
+		rv = O_RDWR | O_APPEND;
+	}
+	if (flags & ~FILE_FLAG_ALL)
+		return -1;
+	if (flags & FILE_FLAG_TRUNCATE)
+		rv |= O_TRUNC;
+	if (flags & FILE_FLAG_CREAT)
+		rv |= O_CREAT;
+	if (flags & FILE_FLAG_EXCL)
+		rv |= O_EXCL;
+#ifdef O_DIRECT
+ 	if (flags & FILE_FLAG_DIRECT)
+		rv |= O_DIRECT;
+#endif
+#ifdef O_DSYNC
+	if (flags & FILE_FLAG_DATASYNC)
+		rv |= O_DSYNC;
+#endif
+#ifdef O_SYNC
+	if (flags & FILE_FLAG_SYNC)
+		rv |= O_SYNC;
+#endif
+	return rv;
 }
 
 file_fd_handle raw_file_open(const char *path, int flags, int *error)
 {
-	int rv = open(path, translate_open_flags(flags));
+	int openflags = translate_open_flags(flags);
+	int rv;
+	if (openflags == -1) {
+		*error = EINVAL;
+		return -1;
+	}
+	rv = open(path, openflags);
 	if (rv < 0 && error)
 		*error = errno;
 	return (file_fd_handle)rv;

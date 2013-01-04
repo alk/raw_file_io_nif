@@ -381,7 +381,7 @@ ERL_NIF_TERM do_nothing(ErlNifEnv* env,
 
 static ErlNifFunc nif_functions[] = {
 	{"do_nothing", 1, do_nothing},
-	{"open", 2, nif_open},
+	{"do_open", 2, nif_open},
 	{"close", 1, nif_close},
 	{"dup", 1, nif_dup},
 	{"initiate_pread", 4, nif_pread},

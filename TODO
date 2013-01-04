@@ -4,9 +4,9 @@
 
 * implement win32 support
 
-* resolve TODO with open flags (i.e. at least O_CREAT and O_TRUNC)
+o [DONE] resolve TODO with open flags (i.e. at least O_CREAT and O_TRUNC)
 
-* cleanly export either open flag constants or maybe wrap open and
+o [DONE] cleanly export either open flag constants or maybe wrap open and
    parse options into int flags
 
 * maybe clean up return values (i.e. {ok, Value} versus {error,
@@ -16,4 +16,4 @@ o [DONE] using strerror to stringify errno values seems like stupid
    idea. Need EPERM to become eperm, just like with erlang's file
    driver
 
-* use large file io on linux/i386
+o [DONE] use large file io on linux/i386
