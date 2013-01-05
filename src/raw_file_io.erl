@@ -17,9 +17,10 @@
 
 -export([do_nothing/1]).
 
--export([open/2, close/1, dup/1, initiate_pread/4, initiate_append/3]).
+-export([open/2, close/1, dup/1,
+         initiate_pread/4, initiate_append/3, initiate_fsync/2]).
 
--export([pread/3, append/2]).
+-export([pread/3, append/2, fsync/1]).
 
 -on_load(init/0).
 
@@ -90,6 +91,9 @@ initiate_pread(_Tag, _FileRef, _Off, _Len) ->
 initiate_append(_Tag, _FileRef, _Iolist) ->
     erlang:nif_error(not_loaded).
 
+initiate_fsync(_Tag, _FileRef) ->
+    erlang:nif_error(not_loaded).
+
 pread(FileRef, Off, Len) ->
     Tag = erlang:make_ref(),
     case initiate_pread(Tag, FileRef, Off, Len) of
@@ -113,6 +117,23 @@ append(FileRef, IoList) ->
                             ok;
                         _ ->
                             {error, Error, Written}
+                    end
+            end;
+        Err ->
+            Err
+    end.
+
+fsync(FileRef) ->
+    Tag = erlang:make_ref(),
+    case initiate_fsync(Tag, FileRef) of
+        Tag ->
+            receive
+                {Tag, Error} ->
+                    case Error of
+                        Tag ->
+                            ok;
+                        _ ->
+                            {error, Error}
                     end
             end;
         Err ->

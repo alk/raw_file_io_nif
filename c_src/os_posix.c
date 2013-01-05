@@ -108,6 +108,12 @@ int raw_file_pread(file_fd_handle fd, void *buf, size_t *nbyte, int64_t offset)
 	return 0;
 }
 
+int raw_file_fsync(file_fd_handle fd)
+{
+	int rv = fsync((int)fd);
+	return (rv < 0) ? errno : 0;
+}
+
 char *raw_file_error_message(int error)
 {
 	return erl_errno_id(error);

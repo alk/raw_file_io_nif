@@ -115,3 +115,9 @@ large_files_test() ->
     ?assertEqual(<<"two">>, raw_file_io:pread(Ref, 8*1024*1024*1024, 4)),
     raw_file_io:close(Ref),
     ok.
+
+fsync_test() ->
+    Name = setup_file("fsync_file"),
+    Ref = raw_file_io:open(Name, [read, append]),
+    ok = raw_file_io:fsync(Ref),
+    ok = raw_file_io:close(Ref).

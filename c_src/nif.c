@@ -372,6 +372,51 @@ ERL_NIF_TERM nif_append(ErlNifEnv* env,
 	return argv[0];
 }
 
+static
+void perform_fsync(void *_req)
+{
+	struct common_req *req = _req;
+	ERL_NIF_TERM reply_value = req->tag;
+	int error;
+
+	error = raw_file_fsync(req->file->fd);
+	if (error) {
+		const char *error_str = raw_file_error_message(error);
+		reply_value = enif_make_atom(req->env, error_str);
+	}
+
+	enif_send(0, &req->reply_pid, req->env,
+		  enif_make_tuple(req->env, 2,
+				  req->tag,
+				  reply_value));
+
+	free_req_common(req);
+}
+
+static
+ERL_NIF_TERM nif_fsync(ErlNifEnv* env,
+		       int argc,
+		       const ERL_NIF_TERM argv[])
+{
+	struct common_req *req;
+	char *err;
+
+	req = calloc(1, sizeof(struct common_req));
+	if (!req)
+		return make_error(env, "enomem");
+
+	err = init_common_req(req, env, argv[0], argv[1]);
+
+	if (err) {
+		free(req);
+		return make_error(env, err);
+	}
+
+	ac_submit(nif_ac_context, req, perform_fsync, 0);
+
+	return argv[0];
+}
+
 
 static
 ERL_NIF_TERM do_nothing(ErlNifEnv* env,
@@ -388,7 +433,8 @@ static ErlNifFunc nif_functions[] = {
 	{"close", 1, nif_close},
 	{"dup", 1, nif_dup},
 	{"initiate_pread", 4, nif_pread},
-	{"initiate_append", 3, nif_append}
+	{"initiate_append", 3, nif_append},
+	{"initiate_fsync", 2, nif_fsync}
 };
 
 static
