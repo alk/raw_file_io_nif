@@ -4,9 +4,6 @@
 init_test() ->
     ?assertEqual(true, lists:member(raw_file_io, erlang:loaded())).
 
-do_nothing_test() ->
-    ?assertEqual(nif, raw_file_io:do_nothing(1)).
-
 tmpname(Basename) ->
     {ok, Cwd} = file:get_cwd(),
     Basedir = case filename:basename(Cwd) of

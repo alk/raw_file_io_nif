@@ -418,17 +418,7 @@ ERL_NIF_TERM nif_fsync(ErlNifEnv* env,
 }
 
 
-static
-ERL_NIF_TERM do_nothing(ErlNifEnv* env,
-			int argc,
-			const ERL_NIF_TERM argv[])
-{
-	return enif_make_atom(env, "nif");
-}
-
-
 static ErlNifFunc nif_functions[] = {
-	{"do_nothing", 1, do_nothing},
 	{"do_open", 2, nif_open},
 	{"close", 1, nif_close},
 	{"dup", 1, nif_dup},

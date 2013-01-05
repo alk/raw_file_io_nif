@@ -15,8 +15,6 @@
 
 -module(raw_file_io).
 
--export([do_nothing/1]).
-
 -export([open/2, close/1, dup/1,
          initiate_pread/4, initiate_append/3, initiate_fsync/2]).
 
@@ -38,9 +36,6 @@ init() ->
         filename:join(Dir, "raw_file_io_nif")
     end,
     erlang:load_nif(SoName, 0).
-
-do_nothing(_) ->
-    not_nif.
 
 open(BinPath, Options) ->
     do_open(BinPath, parse_open_options(Options, 0)).
