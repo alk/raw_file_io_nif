@@ -121,3 +121,40 @@ fsync_test() ->
     Ref = raw_file_io:open(Name, [read, append]),
     ok = raw_file_io:fsync(Ref),
     ok = raw_file_io:close(Ref).
+
+leak_test_loop(InFlightSet, Counter, FileRef) ->
+    receive
+        {Tag, Result} ->
+            {tag, true, Tag} = {tag, sets:is_element(Tag, InFlightSet), Tag},
+            {is_binary, true} = {is_binary, is_binary(Result)},
+            InFlightSet0 = sets:del_element(Tag, InFlightSet),
+            case Counter of
+                0 ->
+                    case sets:size(InFlightSet0) =:= 0 of
+                        true -> done;
+                        _ ->
+                            leak_test_loop(InFlightSet0, Counter, FileRef)
+                    end;
+                _ ->
+                    RV = raw_file_io:initiate_pread(
+                           Counter, FileRef,
+                           1024*1024*1024*1024 + Counter, 1024),
+                    {started_read, Counter} = {started_read, RV},
+                    InFlightSet1 = sets:add_element(Counter, InFlightSet0),
+                    leak_test_loop(InFlightSet1, Counter - 1, FileRef)
+            end
+    end.
+
+leak_test_run(ReqsTotal, Concurrency, FileRef) ->
+    L = [N = raw_file_io:initiate_pread(N, FileRef, 0, 0)
+         || N <- lists:seq(ReqsTotal + 1, ReqsTotal + Concurrency)],
+    leak_test_loop(sets:from_list(L), ReqsTotal, FileRef).
+
+leak_test_() ->
+    {timeout, 60,
+     fun () ->
+             Name = setup_file("leak_file"),
+             Ref = raw_file_io:open(Name, [read]),
+             leak_test_run(2000000, 64, Ref),
+             ok = raw_file_io:close(Ref)
+     end}.
