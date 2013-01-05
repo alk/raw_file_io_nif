@@ -170,43 +170,46 @@ ERL_NIF_TERM nif_dup(ErlNifEnv* env,
 	return rv;
 }
 
-struct pread_request {
+struct common_req {
 	struct nif_file *file;
 	ErlNifEnv *env;
 	ErlNifPid reply_pid;
 	ERL_NIF_TERM tag;
-
-	ErlNifUInt64 off;
-	ErlNifBinary buf;
 };
 
 static
-void perform_read(void *_read_req)
+char *init_common_req(
+	struct common_req *req,
+	ErlNifEnv *env,
+	ERL_NIF_TERM tag, ERL_NIF_TERM ref_term)
 {
-	struct pread_request *read_req = _read_req;
+	struct nif_file_ref *ref;
 	struct nif_file *file;
-	ERL_NIF_TERM reply_value;
-	size_t readen;
-	int error;
-	int new_free_refcount;
 
-	file = read_req->file;
-	readen = read_req->buf.size;
-	error = raw_file_pread(file->fd,
-			       read_req->buf.data,
-			       &readen,
-			       (int64_t)(read_req->off));
-	if (error) {
-		const char *error_str = raw_file_error_message(error);
-		reply_value = enif_make_tuple(
-			read_req->env, 2,
-			enif_make_atom(read_req->env, "error"),
-			enif_make_atom(read_req->env, error_str));
-		enif_release_binary(&read_req->buf);
-	} else {
-		enif_realloc_binary(&read_req->buf, (size_t)readen);
-		reply_value = enif_make_binary(read_req->env, &read_req->buf);
+	req->env = enif_alloc_env();
+
+	ref = term2valid_locked_ref(env, ref_term);
+	if (!ref) {
+		enif_free_env(req->env);
+		return "badarg";
 	}
+	file = ref->file;
+	file->close_refcount++;
+	file->free_refcount++;
+	enif_mutex_unlock(file->lock);
+
+	req->file = file;
+	enif_self(env, &req->reply_pid);
+	req->tag = enif_make_copy(req->env, tag);
+
+	return NULL;
+}
+
+static
+void free_req_common(struct common_req *c)
+{
+	int new_free_refcount;
+	struct nif_file *file = c->file;
 
 	enif_mutex_lock(file->lock);
 	new_free_refcount = --file->free_refcount;
@@ -216,13 +219,50 @@ void perform_read(void *_read_req)
 		free(file);
 	}
 
-	enif_send(0, &read_req->reply_pid, read_req->env,
-		  enif_make_tuple(read_req->env, 2,
-				  read_req->tag,
+	enif_free_env(c->env);
+	free(c);
+}
+
+struct pread_req {
+	struct common_req c;
+
+	ErlNifUInt64 off;
+	ErlNifBinary buf;
+};
+
+static
+void perform_read(void *_req)
+{
+	struct pread_req *req = _req;
+	struct nif_file *file;
+	ERL_NIF_TERM reply_value;
+	size_t readen;
+	int error;
+
+	file = req->c.file;
+	readen = req->buf.size;
+	error = raw_file_pread(file->fd,
+			       req->buf.data,
+			       &readen,
+			       (int64_t)(req->off));
+	if (error) {
+		const char *error_str = raw_file_error_message(error);
+		reply_value = enif_make_tuple(
+			req->c.env, 2,
+			enif_make_atom(req->c.env, "error"),
+			enif_make_atom(req->c.env, error_str));
+		enif_release_binary(&req->buf);
+	} else {
+		enif_realloc_binary(&req->buf, (size_t)readen);
+		reply_value = enif_make_binary(req->c.env, &req->buf);
+	}
+
+	enif_send(0, &req->c.reply_pid, req->c.env,
+		  enif_make_tuple(req->c.env, 2,
+				  req->c.tag,
 				  reply_value));
 
-	enif_free_env(read_req->env);
-	free(read_req);
+	free_req_common(&req->c);
 }
 
 static
@@ -230,14 +270,11 @@ ERL_NIF_TERM nif_pread(ErlNifEnv* env,
 		       int argc,
 		       const ERL_NIF_TERM argv[])
 {
-	struct nif_file_ref *ref;
-	struct nif_file *file;
-	struct pread_request *read_req;
+	struct pread_req *req;
 	ErlNifUInt64 off;
 	uint len;
 	int rv;
-	char *err = "badarg";
-
+	char *err;
 
 	rv = enif_get_uint64(env, argv[2], &off);
 	if (!rv)
@@ -246,46 +283,31 @@ ERL_NIF_TERM nif_pread(ErlNifEnv* env,
 	if (!rv)
 		return make_error(env, "badarg");
 
-	read_req = calloc(1, sizeof(struct pread_request));
-	if (!read_req)
+	req = calloc(1, sizeof(struct pread_req));
+	if (!req)
 		return make_error(env, "enomem");
 
-	read_req->env = enif_alloc_env();
-	rv = enif_alloc_binary(len, &read_req->buf);
-	if (!rv) {
-		err = "enomem";
-		goto err_free_env;
-	}
-
-
-	ref = term2valid_locked_ref(env, argv[1]);
-	if (!ref) {
-		enif_release_binary(&read_req->buf);
-	err_free_env:
-		enif_free_env(read_req->env);
-		free(read_req);
+	err = init_common_req(&req->c, env, argv[0], argv[1]);
+	if (err) {
+		free(req);
 		return make_error(env, err);
 	}
-	file = ref->file;
-	file->close_refcount++;
-	file->free_refcount++;
-	enif_mutex_unlock(file->lock);
 
-	read_req->file = file;
-	enif_self(env, &read_req->reply_pid);
-	read_req->tag = enif_make_copy(read_req->env, argv[0]);
-	read_req->off = off;
+	rv = enif_alloc_binary(len, &req->buf);
+	if (!rv) {
+		free_req_common(&req->c);
+		return make_error(env, "enomem");
+	}
 
-	ac_submit(nif_ac_context, read_req, perform_read, 0);
+	req->off = off;
+
+	ac_submit(nif_ac_context, req, perform_read, 0);
 
 	return argv[0];
 }
 
 struct append_req {
-	struct nif_file *file;
-	ErlNifEnv *env;
-	ErlNifPid reply_pid;
-	ERL_NIF_TERM tag;
+	struct common_req c;
 
 	ERL_NIF_TERM data;
 };
@@ -297,13 +319,12 @@ void perform_append(void *_req)
 	ErlNifBinary bin;
 	size_t written;
 	int rv;
-	int new_free_refcount;
-	ERL_NIF_TERM reply_value = req->tag;
+	ERL_NIF_TERM reply_value = req->c.tag;
 
-	file = req->file;
-	rv = enif_inspect_iolist_as_binary(req->env, req->data, &bin);
+	file = req->c.file;
+	rv = enif_inspect_iolist_as_binary(req->c.env, req->data, &bin);
 	if (!rv) {
-		reply_value = enif_make_atom(req->env, "badarg");
+		reply_value = enif_make_atom(req->c.env, "badarg");
 		goto after_write;
 	}
 
@@ -312,27 +333,18 @@ void perform_append(void *_req)
 
 	if (rv) {
 		const char *error_str = raw_file_error_message(rv);
-		reply_value = enif_make_atom(req->env, error_str);
+		reply_value = enif_make_atom(req->c.env, error_str);
 	}
 
 after_write:
 
-	enif_mutex_lock(file->lock);
-	new_free_refcount = --file->free_refcount;
-	do_close_inner_and_unlock(file);
-	if (!new_free_refcount) {
-		enif_mutex_destroy(file->lock);
-		free(file);
-	}
-
-	enif_send(0, &req->reply_pid, req->env,
-		  enif_make_tuple(req->env, 3,
-				  req->tag,
-				  enif_make_uint(req->env, (unsigned int)written),
+	enif_send(0, &req->c.reply_pid, req->c.env,
+		  enif_make_tuple(req->c.env, 3,
+				  req->c.tag,
+				  enif_make_uint(req->c.env, (unsigned int)written),
 				  reply_value));
 
-	enif_free_env(req->env);
-	free(req);
+	free_req_common(&req->c);
 }
 
 static
@@ -341,28 +353,19 @@ ERL_NIF_TERM nif_append(ErlNifEnv* env,
 			const ERL_NIF_TERM argv[])
 {
 	struct append_req *req;
-	struct nif_file_ref *ref;
-	struct nif_file *file;
+	char *err;
 
 	req = calloc(1, sizeof(struct append_req));
 	if (!req)
 		return make_error(env, "enomem");
-	ref = term2valid_locked_ref(env, argv[1]);
-	if (!ref) {
+
+	err = init_common_req(&req->c, env, argv[0], argv[1]);
+	if (err) {
 		free(req);
-		return make_error(env, "badarg");
+		return make_error(env, err);
 	}
 
-	file = ref->file;
-	file->close_refcount++;
-	file->free_refcount++;
-	enif_mutex_unlock(file->lock);
-
-	req->file = file;
-	req->env = enif_alloc_env();
-	enif_self(env, &req->reply_pid);
-	req->tag = enif_make_copy(req->env, argv[0]);
-	req->data = enif_make_copy(req->env, argv[2]);
+	req->data = enif_make_copy(req->c.env, argv[2]);
 
 	ac_submit(nif_ac_context, req, perform_append, 0);
 
