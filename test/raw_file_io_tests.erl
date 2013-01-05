@@ -161,3 +161,24 @@ leak_test_() ->
              leak_test_run(Runs, 64, Ref),
              ok = raw_file_io:close(Ref)
      end}.
+
+exotic_flags_support_test() ->
+    Name = setup_file("exotic_flags_file"),
+    Ref = raw_file_io:open(Name, [read, append, sync]),
+    ?assertNotMatch({error, _}, Ref),
+    ok = raw_file_io:close(Ref),
+    BadValue = (catch raw_file_io:open(Name, [read, append, direct,
+                                              datasync, sync,
+                                              something])),
+    ?assertMatch({'EXIT', {badarg, _}}, BadValue),
+
+    ok = file:delete(Name),
+
+    ?assertEqual({error, enoent},
+                 raw_file_io:open(Name, [read, append, sync])),
+
+    Ref2 = raw_file_io:open(Name, [read, append, creat]),
+    ?assertNotMatch({error, _}, Ref2),
+
+    ok = raw_file_io:close(Ref2),
+    ok.

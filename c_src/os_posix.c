@@ -15,14 +15,23 @@
 
 #include "os.h"
 
+#define O_UNSUPPORTED (~0)
+#ifndef O_DIRECT
+#define O_DIRECT O_UNSUPPORTED
+#endif
+#ifndef O_SYNC
+#define O_SYNC O_UNSUPPORTED
+#endif
+#ifndef O_DSYNC
+#define O_DSYNC O_UNSUPPORTED
+#endif
+
 static
 int translate_open_flags(int flags)
 {
 	int rv;
 
-	if (flags & ~(FILE_FLAG_READ | FILE_FLAG_APPEND))
-		return -1;
-	if (flags == 0)
+	if ((flags & (FILE_FLAG_READ | FILE_FLAG_APPEND)) == 0)
 		return -1;
 	if (flags == FILE_FLAG_READ) {
 		rv = O_RDONLY;
@@ -39,27 +48,14 @@ int translate_open_flags(int flags)
 		rv |= O_CREAT;
 	if (flags & FILE_FLAG_EXCL)
 		rv |= O_EXCL;
-#ifdef O_DIRECT
  	if (flags & FILE_FLAG_DIRECT)
 		rv |= O_DIRECT;
-#else
-	if (flags & FILE_FLAG_DIRECT)
-		return -1;
-#endif
-#ifdef O_DSYNC
 	if (flags & FILE_FLAG_DATASYNC)
 		rv |= O_DSYNC;
-#else
-	if (flags & FILE_FLAG_DATASYNC)
-		return -1;
-#endif
-#ifdef O_SYNC
 	if (flags & FILE_FLAG_SYNC)
 		rv |= O_SYNC;
-#else
-	if (flags & FILE_FLAG_SYNC)
+	if (rv == O_UNSUPPORTED)
 		return -1;
-#endif
 	return rv;
 }
 
