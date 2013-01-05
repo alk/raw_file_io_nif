@@ -42,14 +42,23 @@ int translate_open_flags(int flags)
 #ifdef O_DIRECT
  	if (flags & FILE_FLAG_DIRECT)
 		rv |= O_DIRECT;
+#else
+	if (flags & FILE_FLAG_DIRECT)
+		return -1;
 #endif
 #ifdef O_DSYNC
 	if (flags & FILE_FLAG_DATASYNC)
 		rv |= O_DSYNC;
+#else
+	if (flags & FILE_FLAG_DATASYNC)
+		return -1;
 #endif
 #ifdef O_SYNC
 	if (flags & FILE_FLAG_SYNC)
 		rv |= O_SYNC;
+#else
+	if (flags & FILE_FLAG_SYNC)
+		return -1;
 #endif
 	return rv;
 }
