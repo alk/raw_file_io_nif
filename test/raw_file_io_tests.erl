@@ -152,6 +152,12 @@ leak_test_() ->
      fun () ->
              Name = setup_file("leak_file"),
              Ref = raw_file_io:open(Name, [read]),
-             leak_test_run(2000000, 64, Ref),
+             Runs = case os:getenv("ONLY_BRIEF_TESTS") of
+                        false ->
+                            2000000;
+                        _ ->
+                            20000
+                    end,
+             leak_test_run(Runs, 64, Ref),
              ok = raw_file_io:close(Ref)
      end}.

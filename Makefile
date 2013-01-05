@@ -9,6 +9,9 @@ eunit: compile
 
 check: eunit
 
+brief_check:
+	ONLY_BRIEF_TESTS=1 $(MAKE) eunit
+
 clean:
 	./rebar clean
 	rm -fr priv ebin tmp
