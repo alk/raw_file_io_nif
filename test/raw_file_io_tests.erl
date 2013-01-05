@@ -101,3 +101,17 @@ access_on_closed_ref_test() ->
 
 errno_test() ->
     ?assertEqual({error, enoent}, raw_file_io:open(<<"/this/cannot/ever/exist">>, [read, append])).
+
+large_files_test() ->
+    Name = setup_file("large_file"),
+    {ok, F} = file:open(Name, [read, write, binary]),
+    ok = file:pwrite(F, 0, <<"zero">>),
+    ok = file:pwrite(F, 16#080000000, <<"one">>),
+    ok = file:pwrite(F, 16#200000000, <<"two">>),
+    file:close(F),
+    Ref = raw_file_io:open(Name, [read]),
+    ?assertEqual(<<"zero">>, raw_file_io:pread(Ref, 0, 4)),
+    ?assertEqual(<<"one", 0:8>>, raw_file_io:pread(Ref, 2*1024*1024*1024, 4)),
+    ?assertEqual(<<"two">>, raw_file_io:pread(Ref, 8*1024*1024*1024, 4)),
+    raw_file_io:close(Ref),
+    ok.
