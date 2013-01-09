@@ -25,17 +25,18 @@
 
 
 init() ->
-    SoName = case code:priv_dir(?MODULE) of
-    {error, bad_name} ->
-        case filelib:is_dir(filename:join(["..", "priv"])) of
-        true ->
-            filename:join(["..", "priv", "raw_file_io_nif"]);
-        false ->
-            filename:join(["priv", "raw_file_io_nif"])
-        end;
-    Dir ->
-        filename:join(Dir, "raw_file_io_nif")
-    end,
+    SoName =
+        case code:priv_dir(?MODULE) of
+            {error, bad_name} ->
+                case filelib:is_dir(filename:join(["..", "priv"])) of
+                    true ->
+                        filename:join(["..", "priv", "raw_file_io_nif"]);
+                    false ->
+                        filename:join(["priv", "raw_file_io_nif"])
+                end;
+            Dir ->
+                filename:join(Dir, "raw_file_io_nif")
+        end,
     erlang:load_nif(SoName, 0).
 
 open(Path, Options) ->
