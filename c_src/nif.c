@@ -301,7 +301,8 @@ ERL_NIF_TERM nif_pread(ErlNifEnv* env,
 
 	req->off = off;
 
-	ac_submit(nif_ac_context, req, perform_read, 0);
+	perform_read(req);
+	/* ac_submit(nif_ac_context, req, perform_read, 0); */
 
 	return argv[0];
 }
@@ -367,7 +368,8 @@ ERL_NIF_TERM nif_append(ErlNifEnv* env,
 
 	req->data = enif_make_copy(req->c.env, argv[2]);
 
-	ac_submit(nif_ac_context, req, perform_append, 0);
+	perform_append(req);
+	/* ac_submit(nif_ac_context, req, perform_append, 0); */
 
 	return argv[0];
 }
@@ -412,7 +414,8 @@ ERL_NIF_TERM nif_fsync(ErlNifEnv* env,
 		return make_error(env, err);
 	}
 
-	ac_submit(nif_ac_context, req, perform_fsync, 0);
+	perform_fsync(req);
+	/* ac_submit(nif_ac_context, req, perform_fsync, 0); */
 
 	return argv[0];
 }
