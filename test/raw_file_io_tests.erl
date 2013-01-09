@@ -47,17 +47,17 @@ write_and_read_test() ->
             ?assertMatch({Tag, _}, V)
     end,
 
-    Read1 = raw_file_io:pread(Ref2, 5, 1024),
+    {ok, Read1} = raw_file_io:pread(Ref2, 5, 1024),
     ?assertEqual(<<"initial stuff", 10:8>>, Read1),
 
     ok = raw_file_io:append(Ref1, <<"and some further stuff\n">>),
 
-    Read2 = raw_file_io:pread(Ref2, erlang:size(Read1) + 5, 3),
+    {ok, Read2} = raw_file_io:pread(Ref2, erlang:size(Read1) + 5, 3),
     ?assertEqual(<<"and">>, Read2),
 
     ok = raw_file_io:close(Ref2),
 
-    Read3 = raw_file_io:pread(Ref1, erlang:size(Read1) + 5, 1024),
+    {ok, Read3} = raw_file_io:pread(Ref1, erlang:size(Read1) + 5, 1024),
     ?assertEqual(<<"and some further stuff\n">>, Read3),
 
     {ok, Ref3} = raw_file_io:open(Name, [append]),
@@ -68,7 +68,7 @@ write_and_read_test() ->
     ok = raw_file_io:close(Ref3),
 
     ?assertEqual(<<"Some initial stuff\nand some further stuff\nmore\neven more\n">>,
-                 raw_file_io:pread(Ref1, 0, 1024)),
+                 element(2, raw_file_io:pread(Ref1, 0, 1024))),
 
     ok = raw_file_io:close(Ref1),
 
@@ -79,7 +79,7 @@ access_on_closed_ref_test() ->
 
     {ok, Ref1} = raw_file_io:open(Name, [read, append]),
 
-    ?assertEqual(<<"Some initial stuff\n">>, raw_file_io:pread(Ref1, 0, 1024)),
+    ?assertEqual(<<"Some initial stuff\n">>, element(2, raw_file_io:pread(Ref1, 0, 1024))),
 
     {ok, Ref2} = raw_file_io:dup(Ref1),
 
@@ -103,9 +103,9 @@ large_files_test() ->
     ok = file:pwrite(F, 16#200000000, <<"two">>),
     file:close(F),
     {ok, Ref} = raw_file_io:open(Name, [read]),
-    ?assertEqual(<<"zero">>, raw_file_io:pread(Ref, 0, 4)),
-    ?assertEqual(<<"one", 0:8>>, raw_file_io:pread(Ref, 2*1024*1024*1024, 4)),
-    ?assertEqual(<<"two">>, raw_file_io:pread(Ref, 8*1024*1024*1024, 4)),
+    ?assertEqual(<<"zero">>, element(2, raw_file_io:pread(Ref, 0, 4))),
+    ?assertEqual(<<"one", 0:8>>, element(2, raw_file_io:pread(Ref, 2*1024*1024*1024, 4))),
+    ?assertEqual(<<"two">>, element(2, raw_file_io:pread(Ref, 8*1024*1024*1024, 4))),
     ok = raw_file_io:close(Ref),
     ok.
 
@@ -175,4 +175,17 @@ exotic_flags_support_test() ->
     {ok, Ref2} = raw_file_io:open(Name, [read, append, creat]),
 
     ok = raw_file_io:close(Ref2),
+    ok.
+
+test_reading_past_eof_test() ->
+    Name = setup_file("reading_past_eof_file"),
+    {ok, Ref} = raw_file_io:open(Name, [read, append]),
+    ok = raw_file_io:truncate(Ref, 0),
+    ok = raw_file_io:append(Ref, <<"aaaa">>),
+    ?assertEqual({ok, <<"aa">>}, raw_file_io:pread(Ref, 2, 4)),
+    ?assertEqual({ok, <<>>}, raw_file_io:pread(Ref, 3, 0)),
+    ?assertEqual({ok, <<>>}, raw_file_io:pread(Ref, 4, 0)),
+    ?assertEqual({ok, <<>>}, raw_file_io:pread(Ref, 5, 0)),
+    ?assertEqual(eof, raw_file_io:pread(Ref, 4, 1)),
+    ?assertEqual(eof, raw_file_io:pread(Ref, 4, 23)),
     ok.

@@ -97,13 +97,20 @@ file_size(_FileRef) ->
 truncate(_FileRef, _Pos) ->
     erlang:nif_error(not_loaded).
 
+pread(_FileRef, _Off, _Len = 0) ->
+    {ok, <<>>};
 pread(FileRef, Off, Len) ->
     Tag = erlang:make_ref(),
     case initiate_pread(Tag, FileRef, Off, Len) of
         Tag ->
             receive
                 {Tag, Value} ->
-                    Value
+                    case Value of
+                        <<>> ->
+                            eof;
+                        _ ->
+                            {ok, Value}
+                    end
             end;
         Err ->
             Err
