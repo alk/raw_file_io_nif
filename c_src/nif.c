@@ -83,7 +83,9 @@ ERL_NIF_TERM nif_open(ErlNifEnv* env,
 
 	file->lock = enif_mutex_create("file mutex");
 
-	return do_make_ref_LOCKED(env, file);
+	return enif_make_tuple(env, 2,
+			       enif_make_atom(env, "ok"),
+			       do_make_ref_LOCKED(env, file));
 }
 
 static
@@ -167,7 +169,9 @@ ERL_NIF_TERM nif_dup(ErlNifEnv* env,
 	assert(file->close_refcount > 0);
 	rv = do_make_ref_LOCKED(env, file);
 	enif_mutex_unlock(file->lock);
-	return rv;
+	return enif_make_tuple(env, 2,
+			       enif_make_atom(env, "ok"),
+			       rv);
 }
 
 struct common_req {

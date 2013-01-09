@@ -27,9 +27,8 @@ setup_file(Basename) ->
 write_and_read_test() ->
     Name = setup_file("write_and_read_file"),
 
-    Ref1 = raw_file_io:open(Name, [read, append]),
-    ?assertNotMatch({error, _}, Ref1),
-    Ref2 = raw_file_io:dup(Ref1),
+    {ok, Ref1} = raw_file_io:open(Name, [read, append]),
+    {ok, Ref2} = raw_file_io:dup(Ref1),
     ?assertNotMatch({error, _}, Ref2),
 
     receive
@@ -61,8 +60,7 @@ write_and_read_test() ->
     Read3 = raw_file_io:pread(Ref1, erlang:size(Read1) + 5, 1024),
     ?assertEqual(<<"and some further stuff\n">>, Read3),
 
-    Ref3 = raw_file_io:open(Name, [append]),
-    ?assertNotMatch({error, _}, Ref3),
+    {ok, Ref3} = raw_file_io:open(Name, [append]),
 
     ok = raw_file_io:append(Ref3, <<"more\n">>),
     ok = raw_file_io:append(Ref3, <<"even more\n">>),
@@ -79,13 +77,11 @@ write_and_read_test() ->
 access_on_closed_ref_test() ->
     Name = setup_file("access_on_closed_ref_file"),
 
-    Ref1 = raw_file_io:open(Name, [read, append]),
-    ?assertNotMatch({error, _}, Ref1),
+    {ok, Ref1} = raw_file_io:open(Name, [read, append]),
 
     ?assertEqual(<<"Some initial stuff\n">>, raw_file_io:pread(Ref1, 0, 1024)),
 
-    Ref2 = raw_file_io:dup(Ref1),
-    ?assertNotMatch({error, _}, Ref2),
+    {ok, Ref2} = raw_file_io:dup(Ref1),
 
     ok = raw_file_io:close(Ref1),
     {error, badarg} = raw_file_io:close(Ref1),
@@ -106,16 +102,16 @@ large_files_test() ->
     ok = file:pwrite(F, 16#080000000, <<"one">>),
     ok = file:pwrite(F, 16#200000000, <<"two">>),
     file:close(F),
-    Ref = raw_file_io:open(Name, [read]),
+    {ok, Ref} = raw_file_io:open(Name, [read]),
     ?assertEqual(<<"zero">>, raw_file_io:pread(Ref, 0, 4)),
     ?assertEqual(<<"one", 0:8>>, raw_file_io:pread(Ref, 2*1024*1024*1024, 4)),
     ?assertEqual(<<"two">>, raw_file_io:pread(Ref, 8*1024*1024*1024, 4)),
-    raw_file_io:close(Ref),
+    ok = raw_file_io:close(Ref),
     ok.
 
 fsync_test() ->
     Name = setup_file("fsync_file"),
-    Ref = raw_file_io:open(Name, [read, append]),
+    {ok, Ref} = raw_file_io:open(Name, [read, append]),
     ok = raw_file_io:fsync(Ref),
     ok = raw_file_io:close(Ref).
 
@@ -151,7 +147,7 @@ leak_test_() ->
     {timeout, 60,
      fun () ->
              Name = setup_file("leak_file"),
-             Ref = raw_file_io:open(Name, [read]),
+             {ok, Ref} = raw_file_io:open(Name, [read]),
              Runs = case os:getenv("ONLY_BRIEF_TESTS") of
                         false ->
                             2000000;
@@ -164,8 +160,7 @@ leak_test_() ->
 
 exotic_flags_support_test() ->
     Name = setup_file("exotic_flags_file"),
-    Ref = raw_file_io:open(Name, [read, append, sync]),
-    ?assertNotMatch({error, _}, Ref),
+    {ok, Ref} = raw_file_io:open(Name, [read, append, sync]),
     ok = raw_file_io:close(Ref),
     BadValue = (catch raw_file_io:open(Name, [read, append, direct,
                                               datasync, sync,
@@ -177,8 +172,7 @@ exotic_flags_support_test() ->
     ?assertEqual({error, enoent},
                  raw_file_io:open(Name, [read, append, sync])),
 
-    Ref2 = raw_file_io:open(Name, [read, append, creat]),
-    ?assertNotMatch({error, _}, Ref2),
+    {ok, Ref2} = raw_file_io:open(Name, [read, append, creat]),
 
     ok = raw_file_io:close(Ref2),
     ok.
