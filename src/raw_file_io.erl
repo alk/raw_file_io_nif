@@ -38,8 +38,8 @@ init() ->
     end,
     erlang:load_nif(SoName, 0).
 
-open(BinPath, Options) ->
-    do_open(BinPath, parse_open_options(Options, 0)).
+open(Path, Options) ->
+    do_open(iolist_to_binary(Path), parse_open_options(Options, 0)).
 
 -define(FILE_FLAG_READ, 1).
 -define(FILE_FLAG_APPEND, 2).
