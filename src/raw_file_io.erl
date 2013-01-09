@@ -16,7 +16,8 @@
 -module(raw_file_io).
 
 -export([open/2, close/1, dup/1,
-         initiate_pread/4, initiate_append/3, initiate_fsync/2]).
+         initiate_pread/4, initiate_append/3, initiate_fsync/2,
+         file_size/1, truncate/2]).
 
 -export([pread/3, append/2, fsync/1]).
 
@@ -87,6 +88,12 @@ initiate_append(_Tag, _FileRef, _Iolist) ->
     erlang:nif_error(not_loaded).
 
 initiate_fsync(_Tag, _FileRef) ->
+    erlang:nif_error(not_loaded).
+
+file_size(_FileRef) ->
+    erlang:nif_error(not_loaded).
+
+truncate(_FileRef, _Pos) ->
     erlang:nif_error(not_loaded).
 
 pread(FileRef, Off, Len) ->

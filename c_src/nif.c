@@ -417,6 +417,53 @@ ERL_NIF_TERM nif_fsync(ErlNifEnv* env,
 	return argv[0];
 }
 
+ERL_NIF_TERM nif_size(ErlNifEnv* env,
+		      int argc,
+		      const ERL_NIF_TERM argv[])
+{
+	struct nif_file_ref *ref;
+	int64_t size;
+	int rv;
+
+	ref = term2valid_locked_ref(env, argv[0]);
+	if (!ref)
+		return make_error(env, "badarg");
+
+	rv = raw_file_size(ref->file->fd, &size);
+	enif_mutex_unlock(ref->file->lock);
+
+	if (rv)
+		return make_error(env, raw_file_error_message(rv));
+
+	return enif_make_tuple(env, 2,
+			       enif_make_atom(env, "ok"),
+			       enif_make_int64(env, size));
+}
+
+/* TODO: make it async */
+ERL_NIF_TERM nif_truncate(ErlNifEnv* env,
+			  int argc,
+			  const ERL_NIF_TERM argv[])
+{
+	struct nif_file_ref *ref;
+	int64_t size;
+	int rv;
+
+	if (!enif_get_int64(env, argv[1], &size))
+		return make_error(env, "badarg");
+
+	ref = term2valid_locked_ref(env, argv[0]);
+	if (!ref)
+		return make_error(env, "badarg");
+
+	rv = raw_file_truncate(ref->file->fd, size);
+	enif_mutex_unlock(ref->file->lock);
+
+	if (!rv)
+		return enif_make_atom(env, "ok");
+
+	return make_error(env, raw_file_error_message(rv));
+}
 
 static ErlNifFunc nif_functions[] = {
 	{"do_open", 2, nif_open},
@@ -424,7 +471,9 @@ static ErlNifFunc nif_functions[] = {
 	{"dup", 1, nif_dup},
 	{"initiate_pread", 4, nif_pread},
 	{"initiate_append", 3, nif_append},
-	{"initiate_fsync", 2, nif_fsync}
+	{"initiate_fsync", 2, nif_fsync},
+	{"file_size", 1, nif_size},
+	{"truncate", 2, nif_truncate}
 };
 
 static

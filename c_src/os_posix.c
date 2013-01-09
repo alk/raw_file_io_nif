@@ -119,6 +119,28 @@ int raw_file_fsync(file_fd_handle fd)
 	return (rv < 0) ? errno : 0;
 }
 
+int raw_file_size(file_fd_handle fd, int64_t *size)
+{
+	struct stat st;
+	int rv;
+
+	rv = fstat((int)fd, &st);
+	if (rv)
+		return errno;
+	*size = (int64_t)st.st_size;
+	return 0;
+}
+
+int raw_file_truncate(file_fd_handle fd, int64_t new_size)
+{
+	int rv;
+
+	rv = ftruncate((int)fd, (off_t)new_size);
+	if (rv)
+		return errno;
+	return 0;
+}
+
 char *raw_file_error_message(int error)
 {
 	return erl_errno_id(error);
