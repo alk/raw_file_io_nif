@@ -10,6 +10,7 @@
 
 struct nif_file {
 	file_fd_handle fd;
+	int sync;
 	int close_refcount;
 	int free_refcount;
 	ErlNifMutex *lock;
@@ -174,6 +175,28 @@ ERL_NIF_TERM nif_dup(ErlNifEnv* env,
 			       rv);
 }
 
+static
+ERL_NIF_TERM nif_set_sync(ErlNifEnv* env,
+			  int argc,
+			  const ERL_NIF_TERM argv[])
+{
+	struct nif_file_ref *ref;
+	int use_sync;
+
+	if (!enif_get_int(env, argv[1], &use_sync))
+		return make_error(env, "badarg");
+
+	ref = term2valid_locked_ref(env, argv[0]);
+	if (!ref)
+		return make_error(env, "badarg");
+
+	ref->file->sync = !!use_sync;
+
+	enif_mutex_unlock(ref->file->lock);
+
+	return enif_make_atom(env, "ok");
+}
+
 struct common_req {
 	struct nif_file *file;
 	ErlNifEnv *env;
@@ -305,8 +328,10 @@ ERL_NIF_TERM nif_pread(ErlNifEnv* env,
 
 	req->off = off;
 
-	perform_read(req);
-	/* ac_submit(nif_ac_context, req, perform_read, 0); */
+	if (req->c.file->sync)
+		perform_read(req);
+	else
+		ac_submit(nif_ac_context, req, perform_read, 0);
 
 	return argv[0];
 }
@@ -372,8 +397,10 @@ ERL_NIF_TERM nif_append(ErlNifEnv* env,
 
 	req->data = enif_make_copy(req->c.env, argv[2]);
 
-	perform_append(req);
-	/* ac_submit(nif_ac_context, req, perform_append, 0); */
+	if (req->c.file->sync)
+		perform_append(req);
+	else
+		ac_submit(nif_ac_context, req, perform_append, 0);
 
 	return argv[0];
 }
@@ -418,8 +445,10 @@ ERL_NIF_TERM nif_fsync(ErlNifEnv* env,
 		return make_error(env, err);
 	}
 
-	perform_fsync(req);
-	/* ac_submit(nif_ac_context, req, perform_fsync, 0); */
+	if (req->file->sync)
+		perform_fsync(req);
+	else
+		ac_submit(nif_ac_context, req, perform_fsync, 0);
 
 	return argv[0];
 }
@@ -476,6 +505,7 @@ static ErlNifFunc nif_functions[] = {
 	{"do_open", 2, nif_open},
 	{"close", 1, nif_close},
 	{"dup", 1, nif_dup},
+	{"set_sync", 2, nif_set_sync},
 	{"initiate_pread", 4, nif_pread},
 	{"initiate_append", 3, nif_append},
 	{"initiate_fsync", 2, nif_fsync},

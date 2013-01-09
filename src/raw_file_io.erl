@@ -17,7 +17,7 @@
 
 -export([open/2, close/1, dup/1,
          initiate_pread/4, initiate_append/3, initiate_fsync/2,
-         file_size/1, truncate/2]).
+         file_size/1, truncate/2, set_sync/2]).
 
 -export([pread/3, append/2, fsync/1]).
 
@@ -95,6 +95,9 @@ file_size(_FileRef) ->
     erlang:nif_error(not_loaded).
 
 truncate(_FileRef, _Pos) ->
+    erlang:nif_error(not_loaded).
+
+set_sync(_FileRef, _ZeroIfFalse) ->
     erlang:nif_error(not_loaded).
 
 pread(_FileRef, _Off, _Len = 0) ->

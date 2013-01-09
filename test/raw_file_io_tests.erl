@@ -189,3 +189,11 @@ test_reading_past_eof_test() ->
     ?assertEqual(eof, raw_file_io:pread(Ref, 4, 1)),
     ?assertEqual(eof, raw_file_io:pread(Ref, 4, 23)),
     ok.
+
+settings_sync_works_test() ->
+    Name = setup_file("settings_sync_works_file"),
+    {ok, Ref} = raw_file_io:open(Name, [read, append]),
+    ?assertEqual({ok, <<"S">>}, raw_file_io:pread(Ref, 0, 1)),
+    ok = raw_file_io:set_sync(Ref, 1),
+    ?assertEqual({ok, <<"S">>}, raw_file_io:pread(Ref, 0, 1)),
+    ok.
