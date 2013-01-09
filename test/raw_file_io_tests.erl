@@ -197,3 +197,46 @@ settings_sync_works_test() ->
     ok = raw_file_io:set_sync(Ref, 1),
     ?assertEqual({ok, <<"S">>}, raw_file_io:pread(Ref, 0, 1)),
     ok.
+
+dotimes(0, _F) ->
+    ok;
+dotimes(N, F) ->
+    F(N),
+    dotimes(N-1, F).
+
+raw_efile_bench_test() ->
+    Name = setup_file("raw_efile_bench_file"),
+    {ok, F} = file:open(Name, [read, raw, write, binary]),
+    ok = file:write(F, <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">>),
+    dotimes(100000, fun (_) ->
+                           {ok, _} = file:pread(F, 0, 10)
+                   end),
+    file:close(F).
+
+efile_bench_test() ->
+    Name = setup_file("efile_bench_file"),
+    {ok, F} = file:open(Name, [read, write, binary]),
+    ok = file:write(F, <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">>),
+    dotimes(100000, fun (_) ->
+                           {ok, _} = file:pread(F, 0, 10)
+                   end),
+    file:close(F).
+
+async_bench_test() ->
+    Name = setup_file("async_bench_file"),
+    {ok, F} = raw_file_io:open(Name, [read, append, truncate]),
+    ok = raw_file_io:append(F, <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">>),
+    dotimes(100000, fun (_) ->
+                           {ok, _} = raw_file_io:pread(F, 0, 10)
+                   end),
+    raw_file_io:close(F).
+
+sync_bench_test() ->
+    Name = setup_file("async_bench_file"),
+    {ok, F} = raw_file_io:open(Name, [read, append, truncate]),
+    ok = raw_file_io:append(F, <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">>),
+    raw_file_io:set_sync(F, 1),
+    dotimes(100000, fun (_) ->
+                           {ok, _} = raw_file_io:pread(F, 0, 10)
+                   end),
+    raw_file_io:close(F).
