@@ -20,7 +20,7 @@
          initiate_truncate/3, initiate_close/2,
          file_size/1, truncate/2, set_sync/2, suppress_writes/1]).
 
--export([pread/3, append/2, fsync/1]).
+-export([pread/3, append/2, read/2, fsync/1]).
 
 -on_load(init/0).
 
@@ -127,6 +127,9 @@ set_sync(_FileRef, _ZeroIfFalse) ->
 
 suppress_writes(_FileRef) ->
     erlang:nif_error(not_loaded).
+
+read(FileRef, Len) ->
+    pread(FileRef, -1, Len).
 
 pread(_FileRef, _Off, _Len = 0) ->
     {ok, <<>>};

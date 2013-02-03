@@ -382,7 +382,7 @@ struct pread_req {
 	struct common_req c;
 
 	volatile int *busy_wait_state_place;
-	ErlNifUInt64 off;
+	ErlNifSInt64 off;
 	ErlNifBinary buf;
 	int error;
 };
@@ -465,14 +465,14 @@ ERL_NIF_TERM nif_pread(ErlNifEnv* env,
 {
 	struct pread_req *req;
 	struct nif_file *file;
-	ErlNifUInt64 off;
+	ErlNifSInt64 off;
 	uint len;
 	int rv;
 	char *err;
 	int k;
 	volatile int busy_wait_state;
 
-	rv = enif_get_uint64(env, argv[2], &off);
+	rv = enif_get_int64(env, argv[2], &off);
 	if (!rv)
 		return make_error(env, "badarg");
 	rv = enif_get_uint(env, argv[3], &len);

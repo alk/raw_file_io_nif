@@ -106,9 +106,16 @@ int raw_file_write(file_fd_handle fd, void *_buf, size_t *nbyte)
 
 int raw_file_pread(file_fd_handle fd, void *buf, size_t *nbyte, int64_t offset)
 {
-	ssize_t rv = pread((int)fd, buf, *nbyte, (off_t)offset);
+	ssize_t rv;
+
+	if (offset < 0)
+		rv = read((int)fd, buf, *nbyte);
+	else
+		rv = pread((int)fd, buf, *nbyte, (off_t)offset);
+
 	if (rv < 0)
 		return errno;
+
 	*nbyte = (size_t)rv;
 	return 0;
 }

@@ -280,3 +280,9 @@ write_suppression_test() ->
     {error, write_closed} = raw_file_io:append(F, <<"asd">>),
     ok = raw_file_io:close(F),
     ok.
+
+plain_read_test() ->
+    Name = setup_file("plain_read_file"),
+    {ok, F} = raw_file_io:open(Name, [read]),
+    {ok, _} = raw_file_io:read(F, 16384),
+    raw_file_io:close(F).
