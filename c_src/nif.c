@@ -9,11 +9,21 @@
 #include <stdio.h>
 
 struct nif_file {
+	struct ac_request_common ac_req;
+
+	struct ac_request_common *nested_reqs_head;
+	struct ac_request_common **nested_reqs_tail;
+
 	file_fd_handle fd;
-	int sync;
-	int close_refcount;
+	unsigned sync:1;
+	unsigned write_closed:1;
+        unsigned ac_req_queued:1;
+	int close_refcount:29;
 	int free_refcount;
+	int truncates_in_flight;
 	ErlNifMutex *lock;
+	int64_t safe_size;
+	int64_t size;
 };
 
 struct nif_file_ref {
@@ -23,6 +33,10 @@ struct nif_file_ref {
 
 static ErlNifResourceType *file_ref_res_type;
 static struct ac_context *nif_ac_context;
+static int64_t nif_file_count;
+static int64_t nif_file_ref_count;
+static int64_t common_req_count;
+
 
 static
 ERL_NIF_TERM make_error(ErlNifEnv *env, const char *error)
@@ -44,7 +58,43 @@ ERL_NIF_TERM do_make_ref_LOCKED(ErlNifEnv *env,
 	ref->closed = 0;
 	rv = enif_make_resource(env, ref);
 	enif_release_resource(ref);
+	__sync_add_and_fetch(&nif_file_ref_count, 1);
 	return rv;
+}
+
+static
+void submit_mutation_req_and_unlock(struct ac_request_common *req, struct nif_file *file);
+
+static
+void exec_file_requests(struct ac_request_common *file_req)
+{
+	struct nif_file *file = (struct nif_file *)file_req;
+	struct ac_request_common *req;
+	int new_free_refcount;
+
+	while (1) {
+		enif_mutex_lock(file->lock);
+		req = ac_request_dequeue(&file->nested_reqs_head, &file->nested_reqs_tail);
+
+		if (!req) {
+			assert(file->ac_req_queued);
+			file->ac_req_queued = 0;
+			break;
+		}
+
+		enif_mutex_unlock(file->lock);
+
+		req->proc(req);
+	}
+
+	new_free_refcount = --file->free_refcount;
+	enif_mutex_unlock(file->lock);
+
+	if (!new_free_refcount) {
+		assert(file->close_refcount == 0);
+		enif_mutex_destroy(file->lock);
+		free(file);
+	}
 }
 
 static
@@ -71,6 +121,7 @@ ERL_NIF_TERM nif_open(ErlNifEnv* env,
 	file = calloc(1, sizeof(struct nif_file));
 	if (!file)
 		return make_error(env, "enomem");
+	__sync_add_and_fetch(&nif_file_count, 1);
 
 	memcpy(namebuf, name_binary.data, name_binary.size);
 	namebuf[name_binary.size] = 0;
@@ -78,9 +129,23 @@ ERL_NIF_TERM nif_open(ErlNifEnv* env,
 	error = 0;
 	file->fd = raw_file_open(namebuf, flags, &error);
 	if (error) {
+		__sync_add_and_fetch(&nif_file_count, -1);
 		free(file);
 		return make_error(env, raw_file_error_message(error));
 	}
+
+	file->ac_req.proc = exec_file_requests;
+	file->ac_req.next = NULL;
+	file->nested_reqs_head = NULL;
+	file->nested_reqs_tail = &file->nested_reqs_head;
+
+	rv = raw_file_size(file->fd, &file->size);
+	if (rv) {
+		raw_file_close(file->fd);
+		free(file);
+		return make_error(env, raw_file_error_message(error));
+	}
+	file->safe_size = file->size;
 
 	file->lock = enif_mutex_create("file mutex");
 
@@ -118,19 +183,6 @@ void do_close_inner_and_unlock(struct nif_file *file)
 	enif_mutex_unlock(file->lock);
 	if (do_close)
 		raw_file_close(fd); /* TODO: check return value maybe */
-}
-
-static
-ERL_NIF_TERM nif_close(ErlNifEnv* env,
-		       int argc,
-		       const ERL_NIF_TERM argv[])
-{
-	struct nif_file_ref *ref = term2valid_locked_ref(env, argv[0]);
-	if (!ref)
-		return make_error(env, "badarg");
-	ref->closed = 1;
-	do_close_inner_and_unlock(ref->file);
-	return enif_make_atom(env, "ok");
 }
 
 static
@@ -197,7 +249,26 @@ ERL_NIF_TERM nif_set_sync(ErlNifEnv* env,
 	return enif_make_atom(env, "ok");
 }
 
+static
+ERL_NIF_TERM nif_suppress_writes(ErlNifEnv* env,
+				 int argc,
+				 const ERL_NIF_TERM argv[])
+{
+	struct nif_file_ref *ref;
+
+	ref = term2valid_locked_ref(env, argv[0]);
+	if (!ref)
+		return make_error(env, "badarg");
+
+	ref->file->write_closed = 1;
+
+	enif_mutex_unlock(ref->file->lock);
+
+	return enif_make_atom(env, "ok");
+}
+
 struct common_req {
+	struct ac_request_common ac_req;
 	struct nif_file *file;
 	ErlNifEnv *env;
 	ErlNifPid reply_pid;
@@ -205,40 +276,96 @@ struct common_req {
 };
 
 static
+void submit_mutation_req(struct common_req *req)
+{
+	struct nif_file *file = req->file;
+	enif_mutex_lock(file->lock);
+	submit_mutation_req_and_unlock(&req->ac_req, file);
+}
+
+static
+void submit_mutation_req_and_unlock(struct ac_request_common *ac_req, struct nif_file *file)
+{
+	unsigned queued = 0;
+	if (!file->ac_req_queued) {
+		assert(file->ac_req.next == NULL);
+		queued = file->ac_req_queued = 1;
+		file->free_refcount++;
+	}
+	ac_request_enqueue(ac_req, &file->nested_reqs_tail);
+	enif_mutex_unlock(file->lock);
+
+	if (queued) {
+		assert(file->ac_req.next == NULL);
+		ac_perform(nif_ac_context, &file->ac_req);
+	}
+}
+
+static
+void init_common_req_and_unlock(struct common_req *req,
+				struct nif_file *file,
+				ac_syscall_t proc,
+				ErlNifEnv *env,
+				ERL_NIF_TERM tag);
+
+static
 char *init_common_req(
 	struct common_req *req,
+	ac_syscall_t proc,
 	ErlNifEnv *env,
 	ERL_NIF_TERM tag, ERL_NIF_TERM ref_term)
 {
 	struct nif_file_ref *ref;
 	struct nif_file *file;
 
-	req->env = enif_alloc_env();
-
 	ref = term2valid_locked_ref(env, ref_term);
-	if (!ref) {
-		enif_free_env(req->env);
+	if (!ref)
 		return "badarg";
-	}
-	file = ref->file;
-	file->close_refcount++;
-	file->free_refcount++;
-	enif_mutex_unlock(file->lock);
 
-	req->file = file;
-	enif_self(env, &req->reply_pid);
-	req->tag = enif_make_copy(req->env, tag);
+	file = ref->file;
+
+	init_common_req_and_unlock(req, file, proc, env, tag);
 
 	return NULL;
 }
 
 static
+void init_common_req_and_unlock(
+	struct common_req *req,
+	struct nif_file *file,
+	ac_syscall_t proc,
+	ErlNifEnv *env,
+	ERL_NIF_TERM tag)
+{
+	file->close_refcount++;
+	file->free_refcount++;
+	enif_mutex_unlock(file->lock);
+
+	req->ac_req.proc = proc;
+	req->ac_req.next = NULL;
+	req->env = enif_alloc_env();
+	req->file = file;
+	enif_self(env, &req->reply_pid);
+	req->tag = enif_make_copy(req->env, tag);
+}
+
+static
+void free_req_common_and_unlock(struct common_req *c, struct nif_file *file);
+
+static
 void free_req_common(struct common_req *c)
 {
-	int new_free_refcount;
 	struct nif_file *file = c->file;
-
 	enif_mutex_lock(file->lock);
+	free_req_common_and_unlock(c, file);
+}
+
+static
+void free_req_common_and_unlock(struct common_req *c, struct nif_file *file)
+{
+	int new_free_refcount;
+	assert(c->ac_req.next == NULL);
+
 	new_free_refcount = --file->free_refcount;
 	do_close_inner_and_unlock(file);
 	if (!new_free_refcount) {
@@ -248,39 +375,79 @@ void free_req_common(struct common_req *c)
 
 	enif_free_env(c->env);
 	free(c);
+	__sync_add_and_fetch(&common_req_count, -1);
 }
 
 struct pread_req {
 	struct common_req c;
 
+	volatile int *busy_wait_state_place;
 	ErlNifUInt64 off;
 	ErlNifBinary buf;
+	int error;
 };
 
+#define BUSY_WAIT_WAITING 1
+#define BUSY_WAIT_DONE 0
+
 static
-void perform_read(void *_req)
+void perform_read_tail(struct pread_req *req);
+
+static
+void perform_read(struct ac_request_common *_req)
 {
-	struct pread_req *req = _req;
+	struct pread_req *req = (struct pread_req *)_req;
+	volatile int *busy_wait_state_place = req->busy_wait_state_place;
 	struct nif_file *file;
-	ERL_NIF_TERM reply_value;
 	size_t readen;
-	int error;
 
 	file = req->c.file;
 	readen = req->buf.size;
-	error = raw_file_pread(file->fd,
-			       req->buf.data,
-			       &readen,
-			       (int64_t)(req->off));
+	req->error = raw_file_pread(file->fd,
+				    req->buf.data,
+				    &readen,
+				    (int64_t)(req->off));
+
+	if (__builtin_expect(readen != req->buf.size, 0) && !req->error) {
+		enif_realloc_binary(&req->buf, (size_t)readen);
+	}
+
+	if (__builtin_expect(
+		    busy_wait_state_place
+		    && __sync_bool_compare_and_swap(&req->busy_wait_state_place,
+						    busy_wait_state_place, NULL), 1)) {
+		/* we found that a) read is still waiting for
+		 * us b) we managed to 'claim' completion
+		 * before nif_read gave up waiting */
+		/* we know nif_read is still waiting and it
+		 * now owns completion of request */
+		*busy_wait_state_place = BUSY_WAIT_DONE;
+		__sync_synchronize();
+		return;
+	}
+
+	/* otherwise either busy wait was not requested or given up
+	 * already and we own completion of request */
+	perform_read_tail(req);
+}
+
+static
+void perform_read_tail(struct pread_req *req)
+{
+	ERL_NIF_TERM reply_value;
+	int error = req->error;
+
 	if (error) {
-		const char *error_str = raw_file_error_message(error);
+		const char *error_str;
+
+		enif_release_binary(&req->buf);
+
+		error_str = raw_file_error_message(error);
 		reply_value = enif_make_tuple(
 			req->c.env, 2,
 			enif_make_atom(req->c.env, "error"),
 			enif_make_atom(req->c.env, error_str));
-		enif_release_binary(&req->buf);
 	} else {
-		enif_realloc_binary(&req->buf, (size_t)readen);
 		reply_value = enif_make_binary(req->c.env, &req->buf);
 	}
 
@@ -288,7 +455,6 @@ void perform_read(void *_req)
 		  enif_make_tuple(req->c.env, 2,
 				  req->c.tag,
 				  reply_value));
-
 	free_req_common(&req->c);
 }
 
@@ -298,10 +464,13 @@ ERL_NIF_TERM nif_pread(ErlNifEnv* env,
 		       const ERL_NIF_TERM argv[])
 {
 	struct pread_req *req;
+	struct nif_file *file;
 	ErlNifUInt64 off;
 	uint len;
 	int rv;
 	char *err;
+	int k;
+	volatile int busy_wait_state;
 
 	rv = enif_get_uint64(env, argv[2], &off);
 	if (!rv)
@@ -313,9 +482,11 @@ ERL_NIF_TERM nif_pread(ErlNifEnv* env,
 	req = calloc(1, sizeof(struct pread_req));
 	if (!req)
 		return make_error(env, "enomem");
+	__sync_add_and_fetch(&common_req_count, 1);
 
-	err = init_common_req(&req->c, env, argv[0], argv[1]);
+	err = init_common_req(&req->c, perform_read, env, argv[0], argv[1]);
 	if (err) {
+		__sync_add_and_fetch(&common_req_count, -1);
 		free(req);
 		return make_error(env, err);
 	}
@@ -328,53 +499,124 @@ ERL_NIF_TERM nif_pread(ErlNifEnv* env,
 
 	req->off = off;
 
-	if (req->c.file->sync)
-		perform_read(req);
-	else
-		ac_submit(nif_ac_context, req, perform_read, 0);
+	file = req->c.file;
+	enif_mutex_lock(file->lock);
 
+	if (off + len > file->safe_size) {
+		submit_mutation_req_and_unlock(&req->c.ac_req, file);
+
+		return argv[0];
+	}
+
+
+	enif_mutex_unlock(file->lock);
+
+	if (__builtin_expect(req->c.file->sync, 0)) {
+ 		ac_sync_perform(&req->c.ac_req);
+		return argv[0];
+	}
+
+	busy_wait_state = BUSY_WAIT_WAITING;
+	req->busy_wait_state_place = &busy_wait_state;
+
+	ac_perform(nif_ac_context, &req->c.ac_req);
+
+	k = 20000;
+	do {
+		__asm__ __volatile__("pause");
+		if (!--k)
+			goto wait_timedout;
+	} while (busy_wait_state != BUSY_WAIT_DONE);
+
+	if (__builtin_expect(!req->error, 1)) {
+		ERL_NIF_TERM retval;
+		/* this is our fast path. If read was
+		 * successful, we skip sending result
+		 * back. We directly return it instead. */
+		retval = enif_make_binary(env, &req->buf);
+		free_req_common(&req->c);
+		return retval;
+	}
+
+	perform_read_tail(req);
 	return argv[0];
+
+wait_timedout:
+
+	/* we've exhausted our wait quota. We stop
+	 * waiting but we need to handle possible race
+	 * of completing request now and potentially
+	 * run completion. */
+
+	if (!__sync_bool_compare_and_swap(&req->busy_wait_state_place,
+					  &busy_wait_state, NULL)) {
+
+		/* ok so our busy waiting actually succeed */
+		perform_read_tail(req);
+
+		/* if we failed to 'free' busy_wait_state place, then
+		 * perform_read is done and is about to mutate
+		 * busy_wait_state to DONE. We need to wait that,
+		 * otherwise returning from nif_read will invalidate
+		 * busy_wait_state's memory and cause perform_read to
+		 * 'shit' to that unowned place */
+
+		while (busy_wait_state != BUSY_WAIT_DONE) {
+			__asm__ __volatile__("pause");
+		}
+	}
+
+	/* we succeeded in 'releasing'
+	 * busy_wait_state place. perform_read
+	 * now owns 'completion' of read (and
+	 * freeing of req) */
+	return argv[0];
+
 }
 
 struct append_req {
 	struct common_req c;
 
+	int64_t size;
+	ErlNifBinary bin;
 	ERL_NIF_TERM data;
 };
 
-void perform_append(void *_req)
+void perform_append(struct ac_request_common *_req)
 {
-	struct append_req *req = _req;
+	struct append_req *req = (struct append_req *)_req;
 	struct nif_file *file;
-	ErlNifBinary bin;
 	size_t written;
 	int rv;
 	ERL_NIF_TERM reply_value = req->c.tag;
 
 	file = req->c.file;
-	rv = enif_inspect_iolist_as_binary(req->c.env, req->data, &bin);
-	if (!rv) {
-		reply_value = enif_make_atom(req->c.env, "badarg");
-		goto after_write;
-	}
 
-	written = (size_t)bin.size;
-	rv = raw_file_write(file->fd, bin.data, &written);
+	written = (size_t)(req->bin.size);
+	rv = raw_file_write(file->fd, req->bin.data, &written);
 
 	if (rv) {
-		const char *error_str = raw_file_error_message(rv);
-		reply_value = enif_make_atom(req->c.env, error_str);
+		abort();
+		/*
+                 * const char *error_str = raw_file_error_message(rv);
+		 * reply_value = enif_make_atom(req->c.env, error_str);
+                 */
 	}
 
-after_write:
+	if (!enif_is_empty_list(req->c.env, req->c.tag))
+		enif_send(0, &req->c.reply_pid, req->c.env,
+			  enif_make_tuple(req->c.env, 3,
+					  req->c.tag,
+					  enif_make_uint(req->c.env, (unsigned int)written),
+					  reply_value));
 
-	enif_send(0, &req->c.reply_pid, req->c.env,
-		  enif_make_tuple(req->c.env, 3,
-				  req->c.tag,
-				  enif_make_uint(req->c.env, (unsigned int)written),
-				  reply_value));
-
-	free_req_common(&req->c);
+	enif_mutex_lock(file->lock);
+	if (!file->truncates_in_flight) {
+		/* but see abort above */
+		assert(file->safe_size + written == req->size);
+		file->safe_size = req->size;
+	}
+	free_req_common_and_unlock(&req->c, file);
 }
 
 static
@@ -383,32 +625,106 @@ ERL_NIF_TERM nif_append(ErlNifEnv* env,
 			const ERL_NIF_TERM argv[])
 {
 	struct append_req *req;
+	struct nif_file *file;
 	char *err;
+	int rv;
+	int fast_write;
 
 	req = calloc(1, sizeof(struct append_req));
 	if (!req)
 		return make_error(env, "enomem");
+	__sync_add_and_fetch(&common_req_count, 1);
 
-	err = init_common_req(&req->c, env, argv[0], argv[1]);
+	err = init_common_req(&req->c, perform_append, env, argv[0], argv[1]);
 	if (err) {
+		__sync_add_and_fetch(&common_req_count, -1);
 		free(req);
 		return make_error(env, err);
 	}
 
-	req->data = enif_make_copy(req->c.env, argv[2]);
+	if (req->c.file->write_closed) {
+		free_req_common(&req->c);
+		return make_error(env, "write_closed");
+	}
 
-	if (req->c.file->sync)
-		perform_append(req);
-	else
-		ac_submit(nif_ac_context, req, perform_append, 0);
+	req->data = enif_make_copy(req->c.env, argv[2]);
+	rv = enif_inspect_iolist_as_binary(req->c.env, req->data, &req->bin);
+	if (!rv) {
+		free_req_common(&req->c);
+		return make_error(env, "badarg");
+	}
+
+	file = req->c.file;
+	fast_write = 0;
+	enif_mutex_lock(file->lock);
+
+	req->size = req->c.file->size += req->bin.size;
+
+	if (file->free_refcount <= 100) {
+		req->c.tag = enif_make_list(req->c.env, 0);
+		fast_write = 1;
+	}
+
+	submit_mutation_req_and_unlock(&req->c.ac_req, file);
+
+	return fast_write ? enif_make_list(env, 0) : argv[0];
+}
+
+static
+void perform_close(struct ac_request_common *_req)
+{
+	struct common_req *req = (struct common_req *)_req;
+	enif_mutex_lock(req->file->lock);
+	/* we're supposed to be executed from exec_file_requests which
+	 * should keep one free_refcount reference */
+	assert(req->file->free_refcount > 0);
+	do_close_inner_and_unlock(req->file);
+
+	enif_send(0, &req->reply_pid, req->env,
+		  enif_make_tuple(req->env, 2,
+				  req->tag,
+				  enif_make_atom(req->env, "ok")));
+
+	free_req_common(req);
+}
+
+static
+ERL_NIF_TERM nif_initiate_close(ErlNifEnv* env,
+				int argc,
+				const ERL_NIF_TERM argv[])
+{
+	struct nif_file_ref *ref;
+	struct nif_file *file;
+	struct common_req *req;
+
+	req = calloc(1, sizeof(struct common_req));
+	if (!req)
+		return make_error(env, "enomem");
+
+	__sync_add_and_fetch(&common_req_count, 1);
+
+	ref = term2valid_locked_ref(env, argv[1]);
+	if (!ref) {
+		free(ref);
+		__sync_add_and_fetch(&common_req_count, -1);
+		return make_error(env, "badarg");
+	}
+
+	file = ref->file;
+
+	ref->closed = 1;
+
+	init_common_req_and_unlock(req, file, perform_close, env, argv[0]);
+
+	submit_mutation_req(req);
 
 	return argv[0];
 }
 
 static
-void perform_fsync(void *_req)
+void perform_fsync(struct ac_request_common *_req)
 {
-	struct common_req *req = _req;
+	struct common_req *req = (struct common_req *)_req;
 	ERL_NIF_TERM reply_value = req->tag;
 	int error;
 
@@ -438,79 +754,128 @@ ERL_NIF_TERM nif_fsync(ErlNifEnv* env,
 	if (!req)
 		return make_error(env, "enomem");
 
-	err = init_common_req(req, env, argv[0], argv[1]);
+	__sync_add_and_fetch(&common_req_count, 1);
+
+	err = init_common_req(req, perform_fsync, env, argv[0], argv[1]);
 
 	if (err) {
+		__sync_add_and_fetch(&common_req_count, -1);
 		free(req);
 		return make_error(env, err);
 	}
 
-	if (req->file->sync)
-		perform_fsync(req);
-	else
-		ac_submit(nif_ac_context, req, perform_fsync, 0);
+	submit_mutation_req(req);
 
 	return argv[0];
 }
 
+static
 ERL_NIF_TERM nif_size(ErlNifEnv* env,
 		      int argc,
 		      const ERL_NIF_TERM argv[])
 {
 	struct nif_file_ref *ref;
 	int64_t size;
-	int rv;
 
 	ref = term2valid_locked_ref(env, argv[0]);
 	if (!ref)
 		return make_error(env, "badarg");
 
-	rv = raw_file_size(ref->file->fd, &size);
+	size = ref->file->size;
 	enif_mutex_unlock(ref->file->lock);
-
-	if (rv)
-		return make_error(env, raw_file_error_message(rv));
 
 	return enif_make_tuple(env, 2,
 			       enif_make_atom(env, "ok"),
 			       enif_make_int64(env, size));
 }
 
-/* TODO: make it async */
+struct truncate_req {
+	struct common_req c;
+
+	int64_t pos;
+};
+
+static
+void perform_truncate(struct ac_request_common *_req)
+{
+	struct truncate_req *req = (struct truncate_req *)_req;
+
+	struct nif_file *file;
+	int rv;
+	ERL_NIF_TERM reply_value = req->c.tag;
+	int truncates_in_flight;
+
+	file = req->c.file;
+
+	rv = raw_file_truncate(file->fd, req->pos);
+	if (rv) {
+		abort();
+	}
+
+	enif_send(0, &req->c.reply_pid, req->c.env,
+		  enif_make_tuple(req->c.env, 2,
+				  req->c.tag,
+				  reply_value));
+
+	enif_mutex_lock(file->lock);
+	truncates_in_flight = --file->truncates_in_flight;
+	if (!truncates_in_flight)
+		file->safe_size = req->pos;
+	free_req_common_and_unlock(&req->c, file);
+}
+
+static
 ERL_NIF_TERM nif_truncate(ErlNifEnv* env,
 			  int argc,
 			  const ERL_NIF_TERM argv[])
 {
-	struct nif_file_ref *ref;
+	struct truncate_req *req;
+	struct nif_file *file;
 	int64_t size;
-	int rv;
+	char *err;
 
-	if (!enif_get_int64(env, argv[1], &size))
+	if (!enif_get_int64(env, argv[2], &size))
 		return make_error(env, "badarg");
 
-	ref = term2valid_locked_ref(env, argv[0]);
-	if (!ref)
-		return make_error(env, "badarg");
+	req = calloc(1, sizeof(struct truncate_req));
+	if (!req)
+		return make_error(env, "enomem");
+	__sync_add_and_fetch(&common_req_count, 1);
 
-	rv = raw_file_truncate(ref->file->fd, size);
-	enif_mutex_unlock(ref->file->lock);
+	err = init_common_req(&req->c, perform_truncate, env, argv[0], argv[1]);
+	if (err) {
+		__sync_add_and_fetch(&common_req_count, -1);
+		free(req);
+		return make_error(env, err);
+	}
 
-	if (!rv)
-		return enif_make_atom(env, "ok");
+	req->pos = size;
 
-	return make_error(env, raw_file_error_message(rv));
+	file = req->c.file;
+	enif_mutex_lock(file->lock);
+
+	file->size = size;
+	if (file->safe_size > size)
+		file->safe_size = size;
+
+	file->truncates_in_flight++;
+
+	submit_mutation_req_and_unlock(&req->c.ac_req, file);
+
+	return argv[0];
 }
 
 static ErlNifFunc nif_functions[] = {
 	{"do_open", 2, nif_open},
-	{"close", 1, nif_close},
+	{"initiate_close", 2, nif_initiate_close},
 	{"dup", 1, nif_dup},
 	{"set_sync", 2, nif_set_sync},
+	{"suppress_writes", 1, nif_suppress_writes},
 	{"initiate_pread", 4, nif_pread},
 	{"initiate_append", 3, nif_append},
 	{"initiate_fsync", 2, nif_fsync},
 	{"file_size", 1, nif_size},
-	{"truncate", 2, nif_truncate}
+	{"initiate_truncate", 3, nif_truncate}
 };
 
 static

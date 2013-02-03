@@ -17,7 +17,8 @@
 
 -export([open/2, close/1, dup/1,
          initiate_pread/4, initiate_append/3, initiate_fsync/2,
-         file_size/1, truncate/2, set_sync/2]).
+         initiate_truncate/3, initiate_close/2,
+         file_size/1, truncate/2, set_sync/2, suppress_writes/1]).
 
 -export([pread/3, append/2, fsync/1]).
 
@@ -76,9 +77,6 @@ parse_open_options(_X, _Flags) ->
 do_open(_, _) ->
     erlang:nif_error(not_loaded).
 
-close(_) ->
-    erlang:nif_error(not_loaded).
-
 dup(_) ->
     erlang:nif_error(not_loaded).
 
@@ -94,10 +92,40 @@ initiate_fsync(_Tag, _FileRef) ->
 file_size(_FileRef) ->
     erlang:nif_error(not_loaded).
 
-truncate(_FileRef, _Pos) ->
+initiate_truncate(_Tag, _FileRef, _Pos) ->
     erlang:nif_error(not_loaded).
 
+truncate(FileRef, Pos) ->
+    Tag = erlang:make_ref(),
+    case initiate_truncate(Tag, FileRef, Pos) of
+        Tag ->
+            receive
+                {Tag, _} ->
+                    ok
+            end;
+        Err ->
+            Err
+    end.
+
+initiate_close(_Tag, _FileRef) ->
+    erlang:nif_error(not_loaded).
+
+close(FileRef) ->
+    Tag = erlang:make_ref(),
+    case initiate_close(Tag, FileRef) of
+        Tag ->
+            receive
+                {Tag, RV} ->
+                    RV
+            end;
+        Err ->
+            Err
+    end.
+
 set_sync(_FileRef, _ZeroIfFalse) ->
+    erlang:nif_error(not_loaded).
+
+suppress_writes(_FileRef) ->
     erlang:nif_error(not_loaded).
 
 pread(_FileRef, _Off, _Len = 0) ->
@@ -115,6 +143,13 @@ pread(FileRef, Off, Len) ->
                             {ok, Value}
                     end
             end;
+        Value when is_binary(Value) ->
+            case Value of
+                <<>> ->
+                    eof;
+                _ ->
+                    {ok, Value}
+            end;
         Err ->
             Err
     end.
@@ -122,6 +157,10 @@ pread(FileRef, Off, Len) ->
 append(FileRef, IoList) ->
     Tag = erlang:make_ref(),
     case initiate_append(Tag, FileRef, IoList) of
+        [] ->
+            %% nil from initiate_append indicates that write is 100%
+            %% background and there's no need to wait for it
+            ok;
         Tag ->
             receive
                 {Tag, Written, Error} ->

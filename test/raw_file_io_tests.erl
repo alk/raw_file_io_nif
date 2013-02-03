@@ -52,7 +52,7 @@ write_and_read_test() ->
 
     ok = raw_file_io:append(Ref1, <<"and some further stuff\n">>),
 
-    {ok, Read2} = raw_file_io:pread(Ref2, erlang:size(Read1) + 5, 3),
+    {andRead, {ok, Read2}} = {andRead, raw_file_io:pread(Ref2, erlang:size(Read1) + 5, 3)},
     ?assertEqual(<<"and">>, Read2),
 
     ok = raw_file_io:close(Ref2),
@@ -115,6 +115,17 @@ fsync_test() ->
     ok = raw_file_io:fsync(Ref),
     ok = raw_file_io:close(Ref).
 
+initiate_msg_pread(Tag, FileRef, Off, Len) ->
+    case raw_file_io:initiate_pread(Tag, FileRef, Off, Len) of
+        Tag ->
+            Tag;
+        Bin when is_binary(Bin) ->
+            self() ! {Tag, Bin},
+            Tag;
+        Err ->
+            Err
+    end.
+
 leak_test_loop(InFlightSet, Counter, FileRef) ->
     receive
         {Tag, Result} ->
@@ -129,7 +140,7 @@ leak_test_loop(InFlightSet, Counter, FileRef) ->
                             leak_test_loop(InFlightSet0, Counter, FileRef)
                     end;
                 _ ->
-                    RV = raw_file_io:initiate_pread(
+                    RV = initiate_msg_pread(
                            Counter, FileRef,
                            1024*1024*1024*1024 + Counter, 1024),
                     {started_read, Counter} = {started_read, RV},
@@ -139,7 +150,7 @@ leak_test_loop(InFlightSet, Counter, FileRef) ->
     end.
 
 leak_test_run(ReqsTotal, Concurrency, FileRef) ->
-    L = [N = raw_file_io:initiate_pread(N, FileRef, 0, 0)
+    L = [N = initiate_msg_pread(N, FileRef, 0, 0)
          || N <- lists:seq(ReqsTotal + 1, ReqsTotal + Concurrency)],
     leak_test_loop(sets:from_list(L), ReqsTotal, FileRef).
 
@@ -208,6 +219,7 @@ raw_efile_bench_test() ->
     Name = setup_file("raw_efile_bench_file"),
     {ok, F} = file:open(Name, [read, raw, write, binary]),
     ok = file:write(F, <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">>),
+    erlang:garbage_collect(),
     dotimes(100000, fun (_) ->
                            {ok, _} = file:pread(F, 0, 10)
                    end),
@@ -217,6 +229,7 @@ efile_bench_test() ->
     Name = setup_file("efile_bench_file"),
     {ok, F} = file:open(Name, [read, write, binary]),
     ok = file:write(F, <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">>),
+    erlang:garbage_collect(),
     dotimes(100000, fun (_) ->
                            {ok, _} = file:pread(F, 0, 10)
                    end),
@@ -226,9 +239,26 @@ async_bench_test() ->
     Name = setup_file("async_bench_file"),
     {ok, F} = raw_file_io:open(Name, [read, append, truncate]),
     ok = raw_file_io:append(F, <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">>),
-    dotimes(100000, fun (_) ->
-                           {ok, _} = raw_file_io:pread(F, 0, 10)
-                   end),
+    erlang:garbage_collect(),
+    dotimes(1000000, fun (_) ->
+                             {ok, _} = raw_file_io:pread(F, 0, 10)
+                     end),
+    raw_file_io:close(F).
+
+async_write_bench_test_() ->
+    {timeout, 120, fun async_write_bench_test_fun/0}.
+
+async_write_bench_test_fun() ->
+    Name = setup_file("async_write_bench_file"),
+    {ok, F} = raw_file_io:open(Name, [read, append, truncate]),
+    ok = raw_file_io:append(F, <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">>),
+    erlang:garbage_collect(),
+    Bin = <<"asdasdasdasdasdasdadsasdasdasdaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">>,
+    dotimes(100000,
+            fun (_) ->
+                    raw_file_io:truncate(F, 1024*1024),
+                    ok = raw_file_io:append(F, Bin)
+            end),
     raw_file_io:close(F).
 
 sync_bench_test() ->
@@ -236,7 +266,17 @@ sync_bench_test() ->
     {ok, F} = raw_file_io:open(Name, [read, append, truncate]),
     ok = raw_file_io:append(F, <<"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">>),
     raw_file_io:set_sync(F, 1),
+    erlang:garbage_collect(),
     dotimes(100000, fun (_) ->
                            {ok, _} = raw_file_io:pread(F, 0, 10)
                    end),
     raw_file_io:close(F).
+
+write_suppression_test() ->
+    Name = setup_file("write_suppression_test"),
+    {ok, F} = raw_file_io:open(Name, [read, append, truncate]),
+    ok = raw_file_io:append(F, <<"asd">>),
+    ok = raw_file_io:suppress_writes(F),
+    {error, write_closed} = raw_file_io:append(F, <<"asd">>),
+    ok = raw_file_io:close(F),
+    ok.
